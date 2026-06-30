@@ -18,8 +18,8 @@ import (
 	"github.com/rancher/channelserver/pkg/server/store/release"
 )
 
-func ListenAndServe(ctx context.Context, address string, configs map[string]*config.Config) error {
-	next := LoggingHandler(os.Stdout, NewHandler(configs))
+func ListenAndServe(ctx context.Context, address string, configs map[string]*config.Config, scarfEndpoint string) error {
+	next := LoggingHandler(os.Stdout, NewHandler(configs, scarfEndpoint))
 	server := http.Server{
 		Addr: address,
 		Handler: http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
@@ -42,7 +42,7 @@ func ListenAndServe(ctx context.Context, address string, configs map[string]*con
 	return nil
 }
 
-func NewHandler(configs map[string]*config.Config) http.Handler {
+func NewHandler(configs map[string]*config.Config, scarfEndpoint string) http.Handler {
 	var apiserver *server.Server
 	var liveconfig *config.Config
 	router := http.NewServeMux()
@@ -50,7 +50,7 @@ func NewHandler(configs map[string]*config.Config) http.Handler {
 		liveconfig = config
 		apiserver = server.DefaultAPIServer()
 		apiserver.Schemas.MustImportAndCustomize(model.Channel{}, func(schema *types.APISchema) {
-			schema.Store = channel.New(config)
+			schema.Store = channel.New(config, scarfEndpoint)
 			schema.CollectionMethods = []string{http.MethodGet}
 			schema.ResourceMethods = []string{http.MethodGet}
 		})

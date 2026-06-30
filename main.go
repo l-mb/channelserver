@@ -28,6 +28,7 @@ var (
 	URLs                 cli.StringSlice
 	SubKeys              cli.StringSlice
 	PathPrefix           cli.StringSlice
+	ScarfEndpoint        string
 )
 
 func main() {
@@ -99,6 +100,12 @@ func main() {
 			EnvVars:     []string{"DEBUG"},
 			Destination: &Debug,
 		},
+		&cli.StringFlag{
+			Name:        "scarf-endpoint",
+			Usage:       "Scarf gateway endpoint template with a {channel} placeholder; empty disables reporting",
+			EnvVars:     []string{"SCARF_ENDPOINT"},
+			Destination: &ScarfEndpoint,
+		},
 	}
 	app.Action = run
 
@@ -143,5 +150,5 @@ func run(c *cli.Context) error {
 		configs[prefix] = config
 		logrus.Infof("Serving channels from %v with subkey %q at /%s", sources, subkey, prefix)
 	}
-	return server.ListenAndServe(ctx, ListenAddress, configs)
+	return server.ListenAndServe(ctx, ListenAddress, configs, ScarfEndpoint)
 }
