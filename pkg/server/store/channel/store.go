@@ -14,16 +14,14 @@ import (
 
 type Channel struct {
 	empty.Store
-	config        *config.Config
-	scarf         *scarf.Service
-	scarfEndpoint string
+	config *config.Config
+	scarf  *scarf.Service
 }
 
-func New(config *config.Config, scarfEndpoint string) *Channel {
+func New(config *config.Config, svc *scarf.Service) *Channel {
 	return &Channel{
-		config:        config,
-		scarf:         scarf.New(),
-		scarfEndpoint: scarfEndpoint,
+		config: config,
+		scarf:  svc,
 	}
 }
 
@@ -46,7 +44,7 @@ func (c *Channel) ByID(apiOp *types.APIRequest, schema *types.APISchema, id stri
 		return types.APIObject{}, nil
 	}
 	if redirect != "" {
-		c.scarf.Send(c.scarfEndpoint, scarf.Event{
+		c.scarf.Send(scarf.Event{
 			Channel:         id,
 			ResolvedVersion: version,
 			LatestVersion:   apiOp.Request.Header.Get("X-SUC-Latest-Version"),

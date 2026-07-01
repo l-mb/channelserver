@@ -1,6 +1,7 @@
 package scarf
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,9 @@ func Test_UnitSendSUC(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := New().send(srv.URL+"/rke2-channelserver/{channel}", Event{
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	err := New(ctx, srv.URL+"/rke2-channelserver/{channel}", 0, 0).send(Event{
 		Channel:         "stable",
 		ResolvedVersion: "v1.31.5+rke2r1",
 		LatestVersion:   "v1.31.4+rke2r1",
@@ -50,7 +53,9 @@ func Test_UnitSendInstall(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := New().send(srv.URL+"/rke2-channelserver/{channel}", Event{
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	err := New(ctx, srv.URL+"/rke2-channelserver/{channel}", 0, 0).send(Event{
 		Channel:         "stable",
 		ResolvedVersion: "v1.31.5+rke2r1",
 		ClientIP:        "203.0.113.7",

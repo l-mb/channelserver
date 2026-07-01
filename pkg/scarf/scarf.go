@@ -2,6 +2,7 @@
 package scarf
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -28,22 +29,37 @@ type Event struct {
 
 // Service sends events to a Scarf gateway endpoint.
 type Service struct {
-	client *http.Client
+	client   *http.Client
+	endpoint string
+	limiter  *limiter
 }
 
-// New returns a Service with a bounded HTTP client.
-func New() *Service {
-	return &Service{client: &http.Client{Timeout: requestTimeout}}
+// New returns a Service reporting to endpoint, rate-limiting per cluster
+// within window (0 disables), tracking up to size distinct clusters.
+func New(ctx context.Context, endpoint string, window time.Duration, size int) *Service {
+	s := &Service{
+		client:   &http.Client{Timeout: requestTimeout},
+		endpoint: endpoint,
+		limiter:  newLimiter(window, size),
+	}
+	if endpoint != "" {
+		go s.limiter.reportLoop(ctx, reportInterval)
+	}
+	return s
 }
 
-// Send fires the event to endpointTemplate in the background; no-op when
-// empty. Failures are logged, never returned or blocking.
-func (s *Service) Send(endpointTemplate string, event Event) {
-	if endpointTemplate == "" {
+// Send fires the event in the background; no-op when endpoint is empty.
+// Failures are logged, never returned or blocking.
+func (s *Service) Send(event Event) {
+	if s.endpoint == "" {
+		return
+	}
+	if !s.limiter.allow(event.ClusterID) {
+		logrus.Debugf("rate-limited Scarf event for cluster %q channel %q", event.ClusterID, event.Channel)
 		return
 	}
 	go func() {
-		if err := s.send(endpointTemplate, event); err != nil {
+		if err := s.send(event); err != nil {
 			logrus.Errorf("failed to send Scarf event for channel %q: %v", event.Channel, err)
 		} else {
 			logrus.Debugf("sent Scarf event for channel %q", event.Channel)
@@ -51,8 +67,8 @@ func (s *Service) Send(endpointTemplate string, event Event) {
 	}()
 }
 
-func (s *Service) send(endpointTemplate string, event Event) error {
-	endpoint := strings.ReplaceAll(endpointTemplate, channelPlaceholder, url.PathEscape(event.Channel))
+func (s *Service) send(event Event) error {
+	endpoint := strings.ReplaceAll(s.endpoint, channelPlaceholder, url.PathEscape(event.Channel))
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return err
