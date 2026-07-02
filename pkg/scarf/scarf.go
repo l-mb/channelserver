@@ -40,10 +40,10 @@ func New(ctx context.Context, endpoint string, window time.Duration, size int) *
 	s := &Service{
 		client:   &http.Client{Timeout: requestTimeout},
 		endpoint: endpoint,
-		limiter:  newLimiter(window, size),
 	}
 	if endpoint != "" {
-		go s.limiter.reportLoop(ctx, reportInterval)
+		s.limiter = newLimiter(window, size)
+		go s.limiter.reportLoop(ctx)
 	}
 	return s
 }

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/axiomhq/hyperloglog"
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/hashicorp/golang-lru/v2/simplelru"
 	"github.com/sirupsen/logrus"
 )
 
@@ -20,7 +20,7 @@ const (
 type limiter struct {
 	mu       sync.Mutex
 	window   time.Duration
-	cache    *lru.Cache[string, time.Time]
+	cache    *simplelru.LRU[string, time.Time]
 	capacity int
 	day      *hyperloglog.Sketch
 	total    *hyperloglog.Sketch
@@ -47,7 +47,7 @@ func newLimiter(window time.Duration, size int) *limiter {
 			size = DefaultCacheSize
 		}
 		l.capacity = size
-		cache, err := lru.NewWithEvict(size, func(_ string, _ time.Time) {
+		cache, err := simplelru.NewLRU(size, func(_ string, _ time.Time) {
 			l.evictions.Add(1)
 		})
 		if err != nil {
@@ -72,7 +72,8 @@ func (l *limiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.rolloverLocked()
+	now := l.now()
+	l.rolloverLocked(now)
 	kb := []byte(key)
 	l.day.Insert(kb)
 	l.total.Insert(kb)
@@ -82,7 +83,6 @@ func (l *limiter) allow(key string) bool {
 		return true
 	}
 
-	now := l.now()
 	if last, ok := l.cache.Get(key); ok && now.Sub(last) < l.window {
 		l.suppressed.Add(1)
 		return false
@@ -93,8 +93,8 @@ func (l *limiter) allow(key string) bool {
 	return true
 }
 
-func (l *limiter) rolloverLocked() {
-	k := dayKey(l.now())
+func (l *limiter) rolloverLocked(now time.Time) {
+	k := dayKey(now)
 	if k == l.dayKey {
 		return
 	}
@@ -105,7 +105,7 @@ func (l *limiter) rolloverLocked() {
 
 func (l *limiter) report() {
 	l.mu.Lock()
-	l.rolloverLocked()
+	l.rolloverLocked(l.now())
 	distinctDay := l.day.Estimate()
 	distinctTotal := l.total.Estimate()
 	cacheEntries := 0
@@ -126,8 +126,8 @@ func (l *limiter) report() {
 	}).Info("scarf rate-limit stats")
 }
 
-func (l *limiter) reportLoop(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
+func (l *limiter) reportLoop(ctx context.Context) {
+	ticker := time.NewTicker(reportInterval)
 	defer ticker.Stop()
 	for {
 		select {
