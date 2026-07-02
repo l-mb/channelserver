@@ -4,6 +4,7 @@ package scarf
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -48,21 +49,29 @@ func New(ctx context.Context, endpoint string, window time.Duration, size int) *
 	return s
 }
 
-// Send fires the event in the background; no-op when endpoint is empty.
-// Failures are logged, never returned or blocking.
-func (s *Service) Send(event Event) {
+// Send reports a resolved channel in a background goroutine; no-op when
+// disabled. Reads headers/IP only past the rate-limit gate; never blocks.
+func (s *Service) Send(channel, resolvedVersion string, req *http.Request) {
 	if s.endpoint == "" {
 		return
 	}
-	if !s.limiter.allow(event.ClusterID) {
-		logrus.Debugf("rate-limited Scarf event for cluster %q channel %q", event.ClusterID, event.Channel)
+	clusterID := req.Header.Get("X-SUC-Cluster-ID")
+	if !s.limiter.allow(clusterID) {
+		logrus.Debugf("rate-limited Scarf event for cluster %q channel %q", clusterID, channel)
 		return
+	}
+	event := Event{
+		Channel:         channel,
+		ResolvedVersion: resolvedVersion,
+		LatestVersion:   req.Header.Get("X-SUC-Latest-Version"),
+		ClusterID:       clusterID,
+		ClientIP:        clientIP(req),
 	}
 	go func() {
 		if err := s.send(event); err != nil {
-			logrus.Errorf("failed to send Scarf event for channel %q: %v", event.Channel, err)
+			logrus.Errorf("failed to send Scarf event for channel %q: %v", channel, err)
 		} else {
-			logrus.Debugf("sent Scarf event for channel %q", event.Channel)
+			logrus.Debugf("sent Scarf event for channel %q", channel)
 		}
 	}()
 }
@@ -75,14 +84,14 @@ func (s *Service) send(event Event) error {
 	}
 
 	q := u.Query()
-	for key, value := range map[string]string{
-		"version_resolved": event.ResolvedVersion,
-		"version_latest":   event.LatestVersion,
-		"cluster_id":       event.ClusterID,
-	} {
-		if value != "" {
-			q.Set(key, value)
-		}
+	if event.ResolvedVersion != "" {
+		q.Set("version_resolved", event.ResolvedVersion)
+	}
+	if event.LatestVersion != "" {
+		q.Set("version_latest", event.LatestVersion)
+	}
+	if event.ClusterID != "" {
+		q.Set("cluster_id", event.ClusterID)
 	}
 	u.RawQuery = q.Encode()
 
@@ -102,4 +111,19 @@ func (s *Service) send(event Event) error {
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
+}
+
+// clientIP returns the real client for the X-Scarf-IP header: first
+// X-Forwarded-For hop (we run behind a load balancer), else RemoteAddr host.
+func clientIP(req *http.Request) string {
+	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+			return first
+		}
+	}
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		return req.RemoteAddr
+	}
+	return host
 }
